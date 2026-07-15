@@ -167,7 +167,7 @@ void Fl_Navigation::update_labels()
 
     page = pages->child(i);
 
-    w = labels->w() - page->labelsize() * 2;
+    w = labels->w();
     fl_font(page->labelfont(), page->labelsize());
     fl_measure(page->label(), w, h);
     h += page->labelsize() * 2;
