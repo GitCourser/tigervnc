@@ -18,8 +18,10 @@ include(CheckCSourceRuns)
 
 include(CMakeMacroLibtoolFile)
 
-project(tigervnc)
-set(VERSION 1.16.80)
+if(NOT DEFINED VERSION)
+  set(VERSION 1.16.80)
+endif()
+project(tigervnc VERSION ${VERSION})
 
 # The RC version must always be four comma-separated numbers
 string(REPLACE . , RCVERSION "${VERSION}.0")
@@ -109,6 +111,21 @@ endif()
 
 if(NOT DEFINED BUILD_WINVNC)
   set(BUILD_WINVNC 1)
+endif()
+
+# Portable Windows viewer: no registry, no AppData, config next to the executable
+option(BUILD_PORTABLE_VIEWER
+  "Build a portable vncviewer (INI next to exe, no registry/AppData)" OFF)
+if(BUILD_PORTABLE_VIEWER AND NOT WIN32)
+  message(WARNING "BUILD_PORTABLE_VIEWER is only meaningful for Windows builds")
+endif()
+if(BUILD_PORTABLE_VIEWER)
+  message(STATUS "BUILD_PORTABLE_VIEWER = ON")
+  # Portable builds only need the viewer, not the unmaintained Windows server.
+  set(BUILD_WINVNC 0)
+  # The portable viewer embeds the Simplified Chinese message catalog.
+  set(ENABLE_NLS ON CACHE STRING
+      "Enable translation of program messages" FORCE)
 endif()
 
 # libstdc++ doesn't implicitly include this, although it is very much

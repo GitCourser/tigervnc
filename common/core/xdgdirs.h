@@ -34,10 +34,19 @@ namespace core {
   const char* getuserhomedir();
 
   /*
+   * Get directory containing the running executable.
+   * On Windows this uses GetModuleFileNameW and returns a UTF-8 path.
+   *
+   * Returns NULL on failure.
+   */
+  const char* getexedir();
+
+  /*
    * Get VNC config directory. On Unix-like systems, this is either:
    * - $XDG_CONFIG_HOME/tigervnc
    * - $HOME/.config/tigervnc
    * On Windows, this is simply %APPDATA%/TigerVNC/.
+   * With BUILD_PORTABLE_VIEWER, this is the executable directory.
    *
    * Returns NULL on failure.
    */
@@ -49,6 +58,7 @@ namespace core {
    * - $XDG_DATA_HOME/tigervnc
    * - $HOME/.local/share/tigervnc
    * On Windows, this is simply %APPDATA%/TigerVNC/.
+   * With BUILD_PORTABLE_VIEWER, this is the executable directory.
    *
    * Returns NULL on failure.
    */
@@ -59,6 +69,7 @@ namespace core {
    * - $XDG_STATE_HOME/tigervnc
    * - $HOME/.local/state/tigervnc
    * On Windows, this is simply %APPDATA%/TigerVNC/.
+   * With BUILD_PORTABLE_VIEWER, this is the executable directory.
    *
    * Returns NULL on failure.
    */

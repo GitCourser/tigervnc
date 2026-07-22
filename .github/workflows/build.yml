@@ -1,245 +1,222 @@
-name: Build
+name: Release Windows Portable Viewer
 
-on: [push, pull_request]
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "发布版本标签，例如 v1.16.80"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: portable-release-${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  MXE_COMMIT: 50e19d7ef374cd81ae5ed86fb43d277a82dd5f94
+  MXE_TARGET: x86_64-w64-mingw32.static
 
 jobs:
-  build-linux:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    env:
-      VERBOSE: 1
-    steps:
-      - uses: actions/checkout@v6
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libfltk1.3-dev fluid gettext appstream
-          sudo apt-get install -y libpixman-1-dev libjpeg-turbo8-dev
-          sudo apt-get install -y libgnutls28-dev nettle-dev libgmp-dev
-          sudo apt-get install -y libxtst-dev libxdamage-dev libxfixes-dev libxrandr-dev libpam-dev
-          sudo apt-get install -y libavcodec-dev libavutil-dev libswscale-dev
-          sudo apt-get install -y uuid-dev libglib2.0-dev libpipewire-0.3-dev
-          sudo apt-get install -y libwayland-dev libxkbcommon-dev
-          sudo apt-get install -y libgtest-dev
-      - name: Configure
-        run: |
-          cmake \
-            -DCMAKE_BUILD_TYPE=Debug \
-            -DENABLE_NLS=ON \
-            -DENABLE_H264=ON \
-            -DENABLE_GNUTLS=ON \
-            -DENABLE_NETTLE=ON \
-            -DBUILD_VIEWER=ON \
-            -S . -B build
-      - name: Build
-        working-directory: build
-        run: make
-      - name: Install
-        working-directory: build
-        run: make tarball
-      - uses: actions/upload-artifact@v7
-        with:
-          name: Linux (Ubuntu)
-          path: build/tigervnc-*.tar.gz
-      - name: Test
-        continue-on-error: true
-        working-directory: build
-        run: ctest --test-dir tests/unit/ --output-junit test-results.xml
-      - name: Upload test results
-        uses: actions/upload-artifact@v7
-        with:
-          name: test-results-linux
-          path: build/tests/unit/test-results.xml
+  build-and-release:
+    name: Build and publish Win64 portable viewer
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
 
-  report-linux:
-    name: Unit tests (Linux)
-    runs-on: ubuntu-latest
-    needs: build-linux
-    if: always()
     steps:
-      - uses: actions/download-artifact@v8
+      - name: Checkout source
+        uses: actions/checkout@v6
         with:
-          name: test-results-linux
-      - uses: dorny/test-reporter@v3
-        with:
-          artifact: test-results-linux
-          name: FIXME not used, but required
-          path: '*.xml'
-          reporter: java-junit
+          fetch-depth: 0
 
-  build-windows:
-    runs-on: windows-latest
-    timeout-minutes: 20
-    env:
-      VERBOSE: 1
-    defaults:
-      run:
-        shell: msys2 {0}
-    steps:
-      - uses: actions/checkout@v6
-      - uses: msys2/setup-msys2@v2
-        with:
-          update: true
-      - name: Install dependencies
-        run: |
-          pacman --sync --noconfirm --needed \
-            make mingw-w64-x86_64-toolchain mingw-w64-x86_64-cmake
-          pacman --sync --noconfirm --needed \
-            mingw-w64-x86_64-fltk1.3 mingw-w64-x86_64-libjpeg-turbo \
-            mingw-w64-x86_64-gnutls mingw-w64-x86_64-pixman \
-            mingw-w64-x86_64-nettle mingw-w64-x86_64-gmp \
-            mingw-w64-x86_64-gtest
-      - name: Configure
-        run: |
-          cmake \
-            -G "MSYS Makefiles" \
-            -DCMAKE_BUILD_TYPE=Debug \
-            -DENABLE_NLS=ON \
-            -DENABLE_H264=ON \
-            -DENABLE_GNUTLS=ON \
-            -DENABLE_NETTLE=ON \
-            -DBUILD_VIEWER=ON \
-            -S . -B build
-      - name: Build
-        working-directory: build
-        run: make
-      - name: Install
-        working-directory: build
+      - name: Resolve release version
+        id: release
+        shell: bash
         env:
-          MSYS2_PATH_TYPE: inherit
-        run: make installer winvnc_installer
-      - uses: actions/upload-artifact@v7
-        with:
-          name: Windows
-          path: build/release/tigervnc*.exe
-      - name: Test
-        continue-on-error: true
-        working-directory: build
-        run: ctest --test-dir tests/unit/ --output-junit test-results.xml
-      - name: Upload test results
-        uses: actions/upload-artifact@v7
-        with:
-          name: test-results-windows
-          path: build/tests/unit/test-results.xml
-
-  report-windows:
-    name: Unit tests (Windows)
-    runs-on: ubuntu-latest
-    needs: build-windows
-    if: always()
-    steps:
-      - uses: dorny/test-reporter@v3
-        with:
-          artifact: test-results-windows
-          name: FIXME not used, but required
-          path: '*.xml'
-          reporter: java-junit
-
-  build-macos:
-    runs-on: macos-latest
-    timeout-minutes: 20
-    env:
-      VERBOSE: 1
-    steps:
-      - uses: actions/checkout@v6
-      - name: Install dependencies
+          MANUAL_VERSION: ${{ inputs.version }}
         run: |
-          brew install fltk@1.3 pixman ffmpeg
-          brew install gnutls nettle gmp
-          brew install googletest
-          brew link fltk@1.3
-      - name: Configure
+          set -euo pipefail
+
+          if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
+            release_tag="${GITHUB_REF_NAME}"
+          else
+            release_tag="${MANUAL_VERSION}"
+          fi
+
+          if [[ ! "${release_tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Version must match v<major>.<minor>.<patch>: ${release_tag}" >&2
+            exit 1
+          fi
+
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]] &&
+             git rev-parse --verify --quiet "refs/tags/${release_tag}^{commit}" >/dev/null; then
+            tag_commit="$(git rev-parse "refs/tags/${release_tag}^{commit}")"
+            head_commit="$(git rev-parse HEAD)"
+            if [[ "${tag_commit}" != "${head_commit}" ]]; then
+              echo "Existing tag ${release_tag} does not point to the selected commit" >&2
+              exit 1
+            fi
+          fi
+
+          build_version="${release_tag#v}"
+          echo "tag=${release_tag}" >> "${GITHUB_OUTPUT}"
+          echo "version=${build_version}" >> "${GITHUB_OUTPUT}"
+          echo "zip=build-release/TigerVNC-Viewer-Portable-x64-${build_version}.zip" >> "${GITHUB_OUTPUT}"
+
+      - name: Install MXE host dependencies
+        shell: bash
         run: |
-          cmake \
-            -DCMAKE_BUILD_TYPE=Debug \
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            autoconf automake autopoint bash bison bzip2 cmake flex g++ \
+            g++-multilib gettext git gperf intltool libffi-dev libc6-dev-i386 \
+            libgdk-pixbuf-2.0-dev libltdl-dev libssl-dev libtool-bin \
+            libxml-parser-perl lzip make nasm ninja-build openssl p7zip-full \
+            patch perl pkg-config python3 python3-mako ruby sed texinfo unzip \
+            wget xz-utils
+          command -v gdk-pixbuf-csource
+          command -v mako-render
+
+      - name: Checkout pinned MXE
+        uses: actions/checkout@v6
+        with:
+          repository: mxe/mxe
+          ref: ${{ env.MXE_COMMIT }}
+          path: .mxe
+
+      - name: Restore MXE static toolchain cache
+        uses: actions/cache@v5
+        with:
+          path: .mxe/usr
+          key: mxe-${{ runner.os }}-${{ env.MXE_COMMIT }}-${{ env.MXE_TARGET }}-tigervnc-full-v1
+
+      - name: Build complete static MXE dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          make -C .mxe -j"$(nproc)" \
+            MXE_TARGETS="${MXE_TARGET}" \
+            cmake gcc fltk gettext gnutls libjpeg-turbo pixman nettle
+
+      - name: Add MXE tools to PATH
+        shell: bash
+        run: |
+          set -euo pipefail
+          mxe_bin="${GITHUB_WORKSPACE}/.mxe/usr/bin"
+          echo "${mxe_bin}" >> "${GITHUB_PATH}"
+          export PATH="${mxe_bin}:${PATH}"
+          command -v "${MXE_TARGET}-gcc"
+          command -v "${MXE_TARGET}-g++"
+          "${MXE_TARGET}-gcc" --version
+
+      - name: Configure complete portable viewer
+        shell: bash
+        env:
+          BUILD_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          ".mxe/usr/bin/${MXE_TARGET}-cmake" \
+            -S . \
+            -B build-release \
+            -G Ninja \
+            -DVERSION="${BUILD_VERSION}" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_PORTABLE_VIEWER=ON \
+            -DBUILD_STATIC=ON \
+            -DBUILD_VIEWER=ON \
+            -DBUILD_WINVNC=OFF \
+            -DBUILD_JAVA=OFF \
             -DENABLE_NLS=ON \
-            -DENABLE_H264=ON \
             -DENABLE_GNUTLS=ON \
             -DENABLE_NETTLE=ON \
-            -DENABLE_WAYLAND=ON \
-            -DBUILD_VIEWER=ON \
-            -S . -B build
-      - name: Build
-        working-directory: build
-        run: make
-      - name: Install
-        working-directory: build
-        run: make dmg
-      - uses: actions/upload-artifact@v7
-        with:
-          name: macOS
-          path: build/release/TigerVNC-*.dmg
-      - name: Test
-        continue-on-error: true
-        working-directory: build
-        run: ctest --test-dir tests/unit/ --output-junit test-results.xml
-      - name: Upload test results
-        uses: actions/upload-artifact@v7
-        with:
-          name: test-results-macos
-          path: build/tests/unit/test-results.xml
+            -DENABLE_H264=ON
 
-  report-macos:
-    name: Unit tests (macOS)
-    runs-on: ubuntu-latest
-    needs: build-macos
-    if: always()
-    steps:
-      - uses: dorny/test-reporter@v3
-        with:
-          artifact: test-results-macos
-          name: FIXME not used, but required
-          path: '*.xml'
-          reporter: java-junit
+      - name: Build portable release package
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --build build-release --target portable --parallel "$(nproc)"
 
-  build-java:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    env:
-      VERBOSE: 1
-    strategy:
-      matrix:
-        java: [ '8', '11', '17', '21' ]
-    steps:
-      - uses: actions/checkout@v6
-      - name: Setup java
-        uses: actions/setup-java@v5
-        with:
-          distribution: 'temurin'
-          java-version: ${{ matrix.java }}
-      - name: Configure
-        working-directory: java
-        run: cmake -DCMAKE_BUILD_TYPE=Debug -S . -B build
-      - name: Build
-        working-directory: java/build
-        run: make
-      - uses: actions/upload-artifact@v7
-        with:
-          name: Java (${{ matrix.java }})
-          path: java/build/VncViewer.jar
+      - name: Verify full feature set and package
+        shell: bash
+        env:
+          RELEASE_ZIP: ${{ steps.release.outputs.zip }}
+        run: |
+          set -euo pipefail
 
-  build-packages:
-    timeout-minutes: 20
-    strategy:
-      matrix:
-        target:
-          - rocky8
-          - rocky9
-          - rocky10
-          - jammy
-          - noble
-          - resolute
-      fail-fast: false
-    runs-on: ubuntu-latest
-    env:
-      DOCKER: ${{ matrix.target }}
-    steps:
-      - uses: actions/checkout@v6
-      - name: Build image
-        run: docker build -t tigervnc/$DOCKER .github/containers/$DOCKER
-      - name: Build packages
-        run: .github/containers/$DOCKER/build.sh
-      - uses: actions/upload-artifact@v7
-        with:
-          name: Packages (${{ matrix.target }})
-          path: .github/containers/${{ matrix.target }}/result
+          for option in \
+            BUILD_PORTABLE_VIEWER ENABLE_NLS ENABLE_GNUTLS ENABLE_NETTLE ENABLE_H264; do
+            if ! grep -Eq "^${option}:[^=]+=ON$" build-release/CMakeCache.txt; then
+              echo "Required CMake option is not enabled: ${option}" >&2
+              exit 1
+            fi
+          done
+
+          for feature in ENABLE_NLS BUILD_PORTABLE_VIEWER HAVE_GNUTLS HAVE_NETTLE HAVE_H264; do
+            if ! grep -Eq "^#define ${feature}([[:space:]]+1)?[[:space:]]*$" \
+                build-release/config.h; then
+              echo "Required feature was not compiled: ${feature}" >&2
+              exit 1
+            fi
+          done
+
+          cmake \
+            -DOBJDUMP=".mxe/usr/bin/${MXE_TARGET}-objdump" \
+            -DPORTABLE_EXECUTABLE="${GITHUB_WORKSPACE}/build-release/vncviewer/vncviewer.exe" \
+            -P cmake/VerifyPortableExe.cmake
+
+          package_entries="$(cmake -E tar tf "${RELEASE_ZIP}")"
+          printf '%s\n' "${package_entries}"
+          if grep -Eiq '\.(dll|mo)$' <<< "${package_entries}"; then
+            echo "Portable package contains an external DLL or MO file" >&2
+            exit 1
+          fi
+          grep -Eq '/vncviewer\.exe$' <<< "${package_entries}"
+          grep -Eq '/vncviewer\.ini$' <<< "${package_entries}"
+          grep -Eq '/LICENCE\.TXT$' <<< "${package_entries}"
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          executable = Path("build-release/vncviewer/vncviewer.exe").read_bytes()
+          catalog = Path("build-release/po/zh_CN.mo").read_bytes()
+          if catalog not in executable:
+              raise SystemExit("embedded zh_CN.mo payload was not found in vncviewer.exe")
+          PY
+
+          release_dir="$(dirname "${RELEASE_ZIP}")"
+          release_file="$(basename "${RELEASE_ZIP}")"
+          (
+            cd "${release_dir}"
+            sha256sum "${release_file}" > "${release_file}.sha256"
+          )
+
+      - name: Create or update GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          RELEASE_ZIP: ${{ steps.release.outputs.zip }}
+        run: |
+          set -euo pipefail
+          checksum="${RELEASE_ZIP}.sha256"
+
+          if gh release view "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release upload "${RELEASE_TAG}" \
+              "${RELEASE_ZIP}" "${checksum}" \
+              --clobber \
+              --repo "${GITHUB_REPOSITORY}"
+          else
+            gh release create "${RELEASE_TAG}" \
+              "${RELEASE_ZIP}" "${checksum}" \
+              --target "${GITHUB_SHA}" \
+              --title "TigerVNC Viewer Portable ${RELEASE_TAG}" \
+              --generate-notes \
+              --repo "${GITHUB_REPOSITORY}"
+          fi

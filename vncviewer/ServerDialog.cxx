@@ -284,6 +284,18 @@ void ServerDialog::handleConnect(Fl_Widget* /*widget*/, void *data)
 
   dialog->hide();
 
+  // avoid duplicates in the history
+  dialog->serverHistory.remove(servername);
+  dialog->serverHistory.insert(dialog->serverHistory.begin(), servername);
+
+#ifdef BUILD_PORTABLE_VIEWER
+  try {
+    savePortableViewerState(servername, dialog->serverHistory);
+  } catch (std::exception& e) {
+    vlog.error(_("Unable to save the default configuration and history: %s"),
+               e.what());
+  }
+#else
   try {
     saveViewerParameters(nullptr, servername);
   } catch (std::exception& e) {
@@ -291,15 +303,12 @@ void ServerDialog::handleConnect(Fl_Widget* /*widget*/, void *data)
                e.what());
   }
 
-  // avoid duplicates in the history
-  dialog->serverHistory.remove(servername);
-  dialog->serverHistory.insert(dialog->serverHistory.begin(), servername);
-
   try {
     dialog->saveServerHistory();
   } catch (std::exception& e) {
     vlog.error(_("Unable to save the server history: %s"), e.what());
   }
+#endif
 }
 
 
@@ -337,73 +346,7 @@ void ServerDialog::loadServerHistory()
 
   serverHistory.clear();
 
-#ifdef _WIN32
-  rawHistory = loadHistoryFromRegKey();
-#else
-
-  const char* stateDir = core::getvncstatedir();
-  if (stateDir == nullptr)
-    throw std::runtime_error(_("Could not determine VNC state directory path"));
-
-  char filepath[PATH_MAX];
-  snprintf(filepath, sizeof(filepath), "%s/%s", stateDir, SERVER_HISTORY);
-
-  /* Read server history from file */
-  FILE* f = fopen(filepath, "r");
-  if (!f) {
-    if (errno == ENOENT) {
-      // no history file
-      return;
-    }
-    throw core::posix_error(
-      core::format(_("Failed to open \"%s\""), filepath), errno);
-  }
-
-  int lineNr = 0;
-  while (!feof(f)) {
-    char line[256];
-
-    // Read the next line
-    lineNr++;
-    if (!fgets(line, sizeof(line), f)) {
-      if (feof(f))
-        break;
-
-      fclose(f);
-      throw core::posix_error(
-        core::format(_("Failed to read line %d in file \"%s\""),
-                     lineNr, filepath),
-        errno);
-    }
-
-    int len = strlen(line);
-
-    if (len == (sizeof(line) - 1)) {
-      fclose(f);
-      std::string msg = core::format(_("Failed to read line %d in "
-                                       "file \"%s\""),
-                                     lineNr, filepath);
-      throw std::runtime_error(
-        core::format("%s: %s", msg.c_str(), _("Line too long")));
-    }
-
-    if ((len > 0) && (line[len-1] == '\n')) {
-      line[len-1] = '\0';
-      len--;
-    }
-    if ((len > 0) && (line[len-1] == '\r')) {
-      line[len-1] = '\0';
-      len--;
-    }
-
-    if (len == 0)
-      continue;
-
-    rawHistory.push_back(line);
-  }
-
-  fclose(f);
-#endif
+  rawHistory = ::loadServerHistory();
 
   // Filter out duplicates, even if they have different formats
   for (const std::string& entry : rawHistory) {
@@ -418,34 +361,7 @@ void ServerDialog::loadServerHistory()
 
 void ServerDialog::saveServerHistory()
 {
-#ifdef _WIN32
-  saveHistoryToRegKey(serverHistory);
-  return;
-#endif
-
-  const char* stateDir = core::getvncstatedir();
-  if (stateDir == nullptr)
-    throw std::runtime_error(_("Could not determine VNC state directory path"));
-
-  char filepath[PATH_MAX];
-  snprintf(filepath, sizeof(filepath), "%s/%s", stateDir, SERVER_HISTORY);
-
-  /* Write server history to file */
-  FILE* f = fopen(filepath, "w+");
-  if (!f) {
-    std::string msg = core::format(_("Failed to open \"%s\""), filepath);
-    throw core::posix_error(msg.c_str(), errno);
-  }
-
-  // Save the last X elements to the config file.
-  size_t count = 0;
-  for (const std::string& entry : serverHistory) {
-    if (++count > SERVER_HISTORY_SIZE)
-      break;
-    fprintf(f, "%s\n", entry.c_str());
-  }
-
-  fclose(f);
+  ::saveServerHistory(serverHistory);
 }
 
 void ServerDialog::updateUsedDir(const char* filename)

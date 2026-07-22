@@ -29,6 +29,32 @@ if(BUILD_WINVNC)
   add_custom_target(winvnc_installer DEPENDS ${CMAKE_PROJECT_NAME}${INST_SUFFIX}-winvnc-${VERSION}.exe)
 endif()
 
+# Portable ZIP package (no installer)
+if(BUILD_PORTABLE_VIEWER)
+  set(PORTABLE_DIR "${CMAKE_BINARY_DIR}/portable/TigerVNC-Viewer-Portable-x64-${VERSION}")
+  set(PORTABLE_ZIP "${CMAKE_BINARY_DIR}/TigerVNC-Viewer-Portable-x64-${VERSION}.zip")
+
+  add_custom_command(OUTPUT ${PORTABLE_ZIP}
+    COMMAND ${CMAKE_COMMAND} -E rm -rf "${CMAKE_BINARY_DIR}/portable"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${PORTABLE_DIR}"
+    COMMAND ${CMAKE_COMMAND} -E copy
+            "$<TARGET_FILE:vncviewer>"
+            "${PORTABLE_DIR}/vncviewer.exe"
+    COMMAND ${CMAKE_COMMAND} -E copy
+            "${CMAKE_SOURCE_DIR}/LICENCE.TXT"
+            "${PORTABLE_DIR}/LICENCE.TXT"
+    COMMAND ${CMAKE_COMMAND} -E copy
+            "${CMAKE_CURRENT_SOURCE_DIR}/portable-vncviewer.ini"
+            "${PORTABLE_DIR}/vncviewer.ini"
+    COMMAND ${CMAKE_COMMAND} -E chdir "${CMAKE_BINARY_DIR}/portable"
+            ${CMAKE_COMMAND} -E tar cf "${PORTABLE_ZIP}" --format=zip
+            "TigerVNC-Viewer-Portable-x64-${VERSION}"
+    DEPENDS vncviewer "${CMAKE_CURRENT_SOURCE_DIR}/portable-vncviewer.ini"
+    COMMENT "Creating portable viewer package"
+    VERBATIM)
+  add_custom_target(portable DEPENDS ${PORTABLE_ZIP})
+endif()
+
 endif() # WIN32
 
 

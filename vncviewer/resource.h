@@ -4,4 +4,5 @@
 //
 #define IDR_MANIFEST                    1
 #define IDI_ICON                        101
+#define IDR_PORTABLE_ZH_CN_MO           102
 

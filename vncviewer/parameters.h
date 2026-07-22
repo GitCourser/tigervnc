@@ -24,10 +24,8 @@
 
 #include "MonitorIndicesParameter.h"
 
-#ifdef _WIN32
 #include <list>
 #include <string>
-#endif
 
 #define SERVER_HISTORY_SIZE 20
 
@@ -85,7 +83,14 @@ extern core::StringParameter via;
 void saveViewerParameters(const char *filename, const char *servername=nullptr);
 char* loadViewerParameters(const char *filename);
 
-#ifdef _WIN32
+std::list<std::string> loadServerHistory();
+void saveServerHistory(const std::list<std::string>& serverHistory);
+#ifdef BUILD_PORTABLE_VIEWER
+void savePortableViewerState(const char* servername,
+                             const std::list<std::string>& serverHistory);
+#endif
+
+#if defined(_WIN32) && !defined(BUILD_PORTABLE_VIEWER)
 std::list<std::string> loadHistoryFromRegKey();
 void saveHistoryToRegKey(const std::list<std::string>& serverHistory);
 #endif

@@ -34,8 +34,39 @@ if(WIN32)
   # Since vncviewer.rc is generated, local includes will be looking
   # in the wrong directory. We need to help it out.
   target_include_directories(vncviewer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+  if(BUILD_PORTABLE_VIEWER)
+    set(PORTABLE_TRANSLATION_RESOURCE
+        "IDR_PORTABLE_ZH_CN_MO RCDATA \"${CMAKE_BINARY_DIR}/po/zh_CN.mo\"")
+  else()
+    set(PORTABLE_TRANSLATION_RESOURCE "")
+  endif()
   configure_file(vncviewer.rc.in vncviewer.rc)
   target_sources(vncviewer PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/vncviewer.rc)
+
+  if(BUILD_PORTABLE_VIEWER)
+    # The portable resource script embeds po/zh_CN.mo in the executable.
+    set_property(SOURCE ${CMAKE_CURRENT_BINARY_DIR}/vncviewer.rc
+                 APPEND PROPERTY OBJECT_DEPENDS
+                 ${CMAKE_BINARY_DIR}/po/zh_CN.mo)
+    add_dependencies(vncviewer translations)
+
+    # A portable Windows binary must not import MinGW or third-party DLLs.
+    # This intentionally fails at link time if a dependency has no static
+    # archive; use the MXE static target for a fully featured build.
+    set_property(TARGET vncviewer APPEND_STRING PROPERTY LINK_FLAGS
+                 " -static -static-libgcc -static-libstdc++")
+
+    if(NOT CMAKE_OBJDUMP)
+      message(FATAL_ERROR "An objdump program is required for portable builds")
+    endif()
+    add_custom_command(TARGET vncviewer POST_BUILD
+      COMMAND ${CMAKE_COMMAND}
+              -DOBJDUMP=${CMAKE_OBJDUMP}
+              -DPORTABLE_EXECUTABLE=$<TARGET_FILE:vncviewer>
+              -P ${CMAKE_SOURCE_DIR}/cmake/VerifyPortableExe.cmake
+      COMMENT "Checking that vncviewer has no non-system DLL dependencies"
+      VERBATIM)
+  endif()
 endif()
 
 if(WIN32)
@@ -62,7 +93,7 @@ if(GNUTLS_FOUND)
   target_include_directories(vncviewer SYSTEM PUBLIC ${GNUTLS_INCLUDE_DIR})
   target_link_libraries(vncviewer ${GNUTLS_LIBRARIES})
   # FIXME: Hack to block it marking gnutls_free() as dllimport
-  if(WIN32 AND BUILD_STATIC)
+  if(WIN32 AND (BUILD_STATIC OR BUILD_PORTABLE_VIEWER))
     target_compile_definitions(vncviewer PRIVATE GNUTLS_INTERNAL_BUILD)
   endif()
 endif()

@@ -113,7 +113,7 @@ if(GNUTLS_FOUND)
   target_link_libraries(rfbserver ${GNUTLS_LIBRARIES})
   target_link_libraries(rfbclient ${GNUTLS_LIBRARIES})
   # FIXME: Hack to block it marking gnutls_free() as dllimport
-  if(WIN32 AND BUILD_STATIC)
+  if(WIN32 AND (BUILD_STATIC OR BUILD_PORTABLE_VIEWER))
     target_compile_definitions(rfbserver PRIVATE GNUTLS_INTERNAL_BUILD)
     target_compile_definitions(rfbclient PRIVATE GNUTLS_INTERNAL_BUILD)
   endif()

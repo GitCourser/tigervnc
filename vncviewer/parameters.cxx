@@ -48,6 +48,17 @@
 #include <limits.h>
 #include <errno.h>
 #include <assert.h>
+#ifdef WIN32
+#include <fcntl.h>
+#include <io.h>
+#include <stdint.h>
+#else
+#include <fcntl.h>
+#include <sys/file.h>
+#include <unistd.h>
+#endif
+#include <list>
+#include <string>
 
 static core::LogWriter vlog("Parameters");
 
@@ -251,6 +262,23 @@ core::StringParameter
 
 static const char* IDENTIFIER_STRING = "TigerVNC Configuration file Version 1.0";
 
+
+#ifdef BUILD_PORTABLE_VIEWER
+enum class ApplyPortableParameters { No, Yes };
+
+struct PortableConfig {
+  std::string serverName;
+  std::list<std::string> history;
+};
+
+static bool parsePortableIni(PortableConfig* config,
+                             ApplyPortableParameters applyParameters);
+static void savePortableConfig(const char* servername,
+                               const std::list<std::string>* historyIn);
+static void savePortableHistory(const std::list<std::string>& history);
+#endif
+
+
 /*
  * We only save the sub set of parameters that can be modified from
  * the graphical user interface
@@ -382,7 +410,7 @@ static bool decodeValue(const char* val, char* dest, size_t destSize) {
 }
 
 
-#ifdef _WIN32
+#if defined(_WIN32) && !defined(BUILD_PORTABLE_VIEWER)
 static void setKeyString(const char *_name, const char *_value, HKEY* hKey) {
   
   const DWORD buffersize = 256;
@@ -734,7 +762,7 @@ static char* loadFromReg() {
 
   return servername;
 }
-#endif // _WIN32
+#endif // defined(_WIN32) && !defined(BUILD_PORTABLE_VIEWER)
 
 
 void saveViewerParameters(const char *filename, const char *servername) {
@@ -743,14 +771,19 @@ void saveViewerParameters(const char *filename, const char *servername) {
   char filepath[PATH_MAX];
   char encodingBuffer[buffersize];
 
-  // Write to the registry or a predefined file if no filename was specified.
+  // Write to the registry/INI or a predefined file if no filename was specified.
   if(filename == nullptr) {
 
-#ifdef _WIN32
+#if defined(_WIN32) && !defined(BUILD_PORTABLE_VIEWER)
     saveToReg(servername);
     return;
 #endif
-    
+
+#ifdef BUILD_PORTABLE_VIEWER
+    savePortableConfig(servername, nullptr);
+    return;
+#endif
+
     const char* configDir = core::getvncconfigdir();
     if (configDir == nullptr)
       throw std::runtime_error(_("Could not determine VNC config directory path"));
@@ -822,11 +855,19 @@ char* loadViewerParameters(const char *filename) {
 
   memset(servername, '\0', sizeof(servername));
 
-  // Load from the registry or a predefined file if no filename was specified.
+  // Load from the registry/INI or a predefined file if no filename was specified.
   if(filename == nullptr) {
 
-#ifdef _WIN32
+#if defined(_WIN32) && !defined(BUILD_PORTABLE_VIEWER)
     return loadFromReg();
+#endif
+
+#ifdef BUILD_PORTABLE_VIEWER
+    PortableConfig config;
+    if (!parsePortableIni(&config, ApplyPortableParameters::Yes))
+      return nullptr;
+    snprintf(servername, sizeof(servername), "%s", config.serverName.c_str());
+    return servername;
 #endif
 
     const char* configDir = core::getvncconfigdir();
@@ -970,4 +1011,613 @@ void migrateDeprecatedOptions()
     alwaysCursor.setParam(true);
     cursorType.setParam("Dot");
   }
+}
+
+
+#ifdef BUILD_PORTABLE_VIEWER
+static std::string getPortableIniPath()
+{
+  const char* configDir = core::getvncconfigdir();
+  if (configDir == nullptr)
+    throw std::runtime_error(_("Could not determine VNC config directory path"));
+
+#ifdef WIN32
+  return std::string(configDir) + "\\vncviewer.ini";
+#else
+  return std::string(configDir) + "/vncviewer.ini";
+#endif
+}
+
+#ifdef WIN32
+static std::wstring portableWidePath(const std::string& path)
+{
+  int length = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+                                   path.c_str(), -1, nullptr, 0);
+  if (length == 0)
+    throw core::win32_error(
+      core::format(_("Invalid UTF-8 path \"%s\""), path.c_str()),
+      GetLastError());
+
+  std::wstring widePath(length, L'\0');
+  if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, path.c_str(), -1,
+                          &widePath[0], length) == 0)
+    throw core::win32_error(
+      core::format(_("Invalid UTF-8 path \"%s\""), path.c_str()),
+      GetLastError());
+  widePath.resize(length - 1);
+  return widePath;
+}
+#endif
+
+class PortableIniLock {
+public:
+  explicit PortableIniLock(const std::string& filepath)
+#ifdef WIN32
+    : handle(nullptr), acquired(false)
+#else
+    : fd(-1)
+#endif
+  {
+#ifdef WIN32
+    std::wstring widePath = portableWidePath(filepath);
+    uint64_t hash = UINT64_C(1469598103934665603);
+    for (wchar_t ch : widePath) {
+      hash ^= static_cast<uint64_t>(ch);
+      hash *= UINT64_C(1099511628211);
+    }
+
+    wchar_t mutexName[64];
+    swprintf(mutexName, sizeof(mutexName) / sizeof(mutexName[0]),
+             L"Local\\TigerVNC.PortableIni.%016llx",
+             static_cast<unsigned long long>(hash));
+    handle = CreateMutexW(nullptr, FALSE, mutexName);
+    if (handle == nullptr)
+      throw core::win32_error(_("Failed to create portable configuration lock"),
+                              GetLastError());
+
+    DWORD result = WaitForSingleObject(handle, INFINITE);
+    if (result != WAIT_OBJECT_0 && result != WAIT_ABANDONED) {
+      DWORD err = GetLastError();
+      CloseHandle(handle);
+      handle = nullptr;
+      throw core::win32_error(_("Failed to lock portable configuration"), err);
+    }
+    acquired = true;
+#else
+    std::string lockpath = filepath + ".lock";
+    fd = open(lockpath.c_str(), O_CREAT | O_RDWR, 0600);
+    if (fd < 0)
+      throw core::posix_error(
+        core::format(_("Failed to open \"%s\""), lockpath.c_str()), errno);
+    if (flock(fd, LOCK_EX) != 0) {
+      int savedErrno = errno;
+      close(fd);
+      fd = -1;
+      throw core::posix_error(_("Failed to lock portable configuration"),
+                              savedErrno);
+    }
+#endif
+  }
+
+  ~PortableIniLock()
+  {
+#ifdef WIN32
+    if (acquired)
+      ReleaseMutex(handle);
+    if (handle != nullptr)
+      CloseHandle(handle);
+#else
+    if (fd >= 0) {
+      flock(fd, LOCK_UN);
+      close(fd);
+    }
+#endif
+  }
+
+private:
+  PortableIniLock(const PortableIniLock&) = delete;
+  PortableIniLock& operator=(const PortableIniLock&) = delete;
+
+#ifdef WIN32
+  HANDLE handle;
+  bool acquired;
+#else
+  int fd;
+#endif
+};
+
+static FILE* openPortableIni(const std::string& filepath, bool* notFound)
+{
+  *notFound = false;
+#ifdef WIN32
+  std::wstring widePath = portableWidePath(filepath);
+  HANDLE handle = CreateFileW(widePath.c_str(), GENERIC_READ,
+                              FILE_SHARE_READ | FILE_SHARE_WRITE |
+                                FILE_SHARE_DELETE,
+                              nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL,
+                              nullptr);
+  if (handle == INVALID_HANDLE_VALUE) {
+    DWORD err = GetLastError();
+    if (err == ERROR_FILE_NOT_FOUND || err == ERROR_PATH_NOT_FOUND) {
+      *notFound = true;
+      return nullptr;
+    }
+    throw core::win32_error(
+      core::format(_("Failed to open \"%s\""), filepath.c_str()), err);
+  }
+
+  int fd = _open_osfhandle(reinterpret_cast<intptr_t>(handle),
+                           _O_RDONLY | _O_TEXT);
+  if (fd < 0) {
+    int savedErrno = errno;
+    CloseHandle(handle);
+    throw core::posix_error(
+      core::format(_("Failed to open \"%s\""), filepath.c_str()),
+      savedErrno);
+  }
+  FILE* file = _fdopen(fd, "r");
+  if (file == nullptr) {
+    int savedErrno = errno;
+    _close(fd);
+    throw core::posix_error(
+      core::format(_("Failed to open \"%s\""), filepath.c_str()),
+      savedErrno);
+  }
+  return file;
+#else
+  FILE* file = fopen(filepath.c_str(), "r");
+  if (file == nullptr) {
+    if (errno == ENOENT) {
+      *notFound = true;
+      return nullptr;
+    }
+    throw core::posix_error(
+      core::format(_("Failed to open \"%s\""), filepath.c_str()), errno);
+  }
+  return file;
+#endif
+}
+
+static FILE* createPortableTempFile(const std::string& filepath,
+                                    std::string* tmppath)
+{
+#ifdef WIN32
+  for (unsigned attempt = 0; attempt < 100; attempt++) {
+    *tmppath = core::format("%s.tmp.%lu.%llu.%u", filepath.c_str(),
+                            static_cast<unsigned long>(GetCurrentProcessId()),
+                            static_cast<unsigned long long>(GetTickCount64()),
+                            attempt);
+    std::wstring widePath = portableWidePath(*tmppath);
+    HANDLE handle = CreateFileW(widePath.c_str(), GENERIC_READ | GENERIC_WRITE,
+                                0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL,
+                                nullptr);
+    if (handle == INVALID_HANDLE_VALUE) {
+      DWORD err = GetLastError();
+      if (err == ERROR_FILE_EXISTS || err == ERROR_ALREADY_EXISTS)
+        continue;
+      throw core::win32_error(
+        core::format(_("Failed to open \"%s\""), tmppath->c_str()), err);
+    }
+
+    int fd = _open_osfhandle(reinterpret_cast<intptr_t>(handle),
+                             _O_RDWR | _O_TEXT);
+    if (fd < 0) {
+      int savedErrno = errno;
+      CloseHandle(handle);
+      DeleteFileW(widePath.c_str());
+      throw core::posix_error(
+        core::format(_("Failed to open \"%s\""), tmppath->c_str()),
+        savedErrno);
+    }
+    FILE* file = _fdopen(fd, "w+");
+    if (file == nullptr) {
+      int savedErrno = errno;
+      _close(fd);
+      DeleteFileW(widePath.c_str());
+      throw core::posix_error(
+        core::format(_("Failed to open \"%s\""), tmppath->c_str()),
+        savedErrno);
+    }
+    return file;
+  }
+  throw std::runtime_error(_("Failed to create a unique temporary file"));
+#else
+  std::string pattern = filepath + ".tmp.XXXXXX";
+  int fd = mkstemp(&pattern[0]);
+  if (fd < 0)
+    throw core::posix_error(
+      core::format(_("Failed to open \"%s\""), pattern.c_str()), errno);
+  *tmppath = pattern;
+  FILE* file = fdopen(fd, "w+");
+  if (file == nullptr) {
+    int savedErrno = errno;
+    close(fd);
+    remove(tmppath->c_str());
+    throw core::posix_error(
+      core::format(_("Failed to open \"%s\""), tmppath->c_str()),
+      savedErrno);
+  }
+  return file;
+#endif
+}
+
+static void removePortableFile(const std::string& filepath)
+{
+#ifdef WIN32
+  try {
+    std::wstring widePath = portableWidePath(filepath);
+    DeleteFileW(widePath.c_str());
+  } catch (std::exception&) {
+  }
+#else
+  remove(filepath.c_str());
+#endif
+}
+
+static void trimInPlace(char* s)
+{
+  char* end;
+  size_t len;
+
+  while (*s == ' ' || *s == '\t')
+    memmove(s, s + 1, strlen(s));
+
+  len = strlen(s);
+  end = s + len;
+  while (end > s &&
+         (end[-1] == ' ' || end[-1] == '\t' ||
+          end[-1] == '\r' || end[-1] == '\n')) {
+    *--end = '\0';
+  }
+}
+
+static void replacePortableIni(const std::string& tmppath,
+                               const std::string& filepath)
+{
+#ifdef WIN32
+  std::wstring wideTmp = portableWidePath(tmppath);
+  std::wstring widePath = portableWidePath(filepath);
+  if (!MoveFileExW(wideTmp.c_str(), widePath.c_str(),
+                   MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+    DWORD err = GetLastError();
+    DeleteFileW(wideTmp.c_str());
+    throw core::win32_error(
+      core::format(_("Failed to replace \"%s\""), filepath.c_str()), err);
+  }
+#else
+  if (rename(tmppath.c_str(), filepath.c_str()) != 0) {
+    int savedErrno = errno;
+    remove(tmppath.c_str());
+    throw core::posix_error(
+      core::format(_("Failed to replace \"%s\""), filepath.c_str()),
+      savedErrno);
+  }
+#endif
+}
+
+static void writePortableIni(const char* servername,
+                             const std::list<std::string>& history)
+{
+  const size_t buffersize = 256;
+  char encodingBuffer[buffersize];
+  std::string filepath = getPortableIniPath();
+  std::string tmppath;
+  FILE* f = createPortableTempFile(filepath, &tmppath);
+  unsigned index = 0;
+
+  fprintf(f, "; TigerVNC portable configuration\n");
+  fprintf(f, "; Generated by vncviewer\n\n");
+  fprintf(f, "[General]\n");
+  fprintf(f, "Language=zh_CN\n\n");
+  fprintf(f, "[Viewer]\n");
+
+  if (!encodeValue(servername ? servername : "", encodingBuffer, buffersize)) {
+    fclose(f);
+    removePortableFile(tmppath);
+    throw std::runtime_error(
+      core::format(_("Failed to save \"%s\": %s"), "ServerName",
+                   _("Could not encode parameter")));
+  }
+  fprintf(f, "ServerName=%s\n", encodingBuffer);
+
+  for (core::VoidParameter* param : parameterArray) {
+    if (param->isDefault())
+      continue;
+    if (!encodeValue(param->getValueStr().c_str(),
+                     encodingBuffer, buffersize)) {
+      fclose(f);
+      removePortableFile(tmppath);
+      throw std::runtime_error(
+        core::format(_("Failed to save \"%s\": %s"), param->getName(),
+                     _("Could not encode parameter")));
+    }
+    fprintf(f, "%s=%s\n", param->getName(), encodingBuffer);
+  }
+
+  fprintf(f, "\n[History]\n");
+  for (const std::string& entry : history) {
+    if (index >= SERVER_HISTORY_SIZE)
+      break;
+    if (!encodeValue(entry.c_str(), encodingBuffer, buffersize)) {
+      fclose(f);
+      removePortableFile(tmppath);
+      throw std::runtime_error(
+        core::format(_("Failed to save \"%s\": %s"), "History",
+                     _("Could not encode parameter")));
+    }
+    fprintf(f, "%u=%s\n", index, encodingBuffer);
+    index++;
+  }
+
+  if (ferror(f)) {
+    int savedErrno = errno;
+    fclose(f);
+    removePortableFile(tmppath);
+    throw core::posix_error(
+      core::format(_("Failed to write \"%s\""), tmppath.c_str()),
+      savedErrno);
+  }
+  if (fclose(f) != 0) {
+    int savedErrno = errno;
+    removePortableFile(tmppath);
+    throw core::posix_error(
+      core::format(_("Failed to write \"%s\""), tmppath.c_str()),
+      savedErrno);
+  }
+
+  replacePortableIni(tmppath, filepath);
+}
+
+static bool parsePortableIni(PortableConfig* config,
+                             ApplyPortableParameters applyParameters)
+{
+  const size_t buffersize = 256;
+  char line[buffersize];
+  char decodingBuffer[buffersize];
+  std::string filepath = getPortableIniPath();
+  bool notFound;
+  FILE* f;
+  enum { SEC_NONE, SEC_VIEWER, SEC_HISTORY } section = SEC_NONE;
+  int lineNr = 0;
+
+  config->serverName.clear();
+  config->history.clear();
+  f = openPortableIni(filepath, &notFound);
+  if (notFound)
+    return false;
+
+  while (!feof(f)) {
+    char *value;
+    char *eq;
+
+    lineNr++;
+    if (!fgets(line, sizeof(line), f)) {
+      if (feof(f))
+        break;
+      int savedErrno = errno;
+      fclose(f);
+      throw core::posix_error(
+        core::format(_("Failed to read line %d in file \"%s\""),
+                     lineNr, filepath.c_str()),
+        savedErrno);
+    }
+
+    if (strlen(line) == (sizeof(line) - 1)) {
+      fclose(f);
+      std::string msg = core::format(_("Failed to read line %d in "
+                                       "file \"%s\""),
+                                     lineNr, filepath.c_str());
+      throw std::runtime_error(
+        core::format("%s: %s", msg.c_str(), _("Line too long")));
+    }
+
+    trimInPlace(line);
+    if (line[0] == '\0' || line[0] == '#' || line[0] == ';')
+      continue;
+
+    if (line[0] == '[') {
+      char* end = strchr(line, ']');
+      if (end) {
+        *end = '\0';
+        if (strcasecmp(line + 1, "Viewer") == 0)
+          section = SEC_VIEWER;
+        else if (strcasecmp(line + 1, "History") == 0)
+          section = SEC_HISTORY;
+        else
+          section = SEC_NONE;
+      }
+      continue;
+    }
+
+    eq = strchr(line, '=');
+    if (eq == nullptr)
+      continue;
+    *eq = '\0';
+    value = eq + 1;
+    trimInPlace(line);
+    trimInPlace(value);
+
+    try {
+      if (section == SEC_VIEWER) {
+        if (strcasecmp(line, "ServerName") == 0) {
+          if (!decodeValue(value, decodingBuffer, sizeof(decodingBuffer)))
+            throw std::runtime_error(_("Invalid format or too large value"));
+          config->serverName = decodingBuffer;
+        } else if (applyParameters == ApplyPortableParameters::Yes) {
+          bool invalidParameterName = findAndSetViewerParameterFromValue(
+            parameterArray,
+            sizeof(parameterArray) / sizeof(core::VoidParameter *),
+            value, line);
+          if (invalidParameterName) {
+            invalidParameterName = findAndSetViewerParameterFromValue(
+              readOnlyParameterArray,
+              sizeof(readOnlyParameterArray) /
+                sizeof(core::VoidParameter *),
+              value, line);
+          }
+          if (invalidParameterName)
+            vlog.error(_("Failed to read parameter \"%s\": %s"),
+                       line, _("Unknown parameter"));
+        }
+      } else if (section == SEC_HISTORY) {
+        if (!decodeValue(value, decodingBuffer, sizeof(decodingBuffer)))
+          throw std::runtime_error(_("Invalid format or too large value"));
+        if (decodingBuffer[0] != '\0' &&
+            config->history.size() < SERVER_HISTORY_SIZE)
+          config->history.push_back(decodingBuffer);
+      }
+    } catch (std::exception& e) {
+      std::string msg = core::format(_("Failed to read line %d in "
+                                       "file \"%s\""),
+                                     lineNr, filepath.c_str());
+      if (applyParameters == ApplyPortableParameters::No) {
+        fclose(f);
+        throw std::runtime_error(
+          core::format("%s: %s", msg.c_str(), e.what()));
+      }
+      vlog.error("%s: %s", msg.c_str(), e.what());
+    }
+  }
+
+  if (fclose(f) != 0)
+    throw core::posix_error(
+      core::format(_("Failed to close \"%s\""), filepath.c_str()), errno);
+  if (applyParameters == ApplyPortableParameters::Yes)
+    migrateDeprecatedOptions();
+  return true;
+}
+
+static void savePortableConfig(const char* servername,
+                               const std::list<std::string>* historyIn)
+{
+  std::string filepath = getPortableIniPath();
+  PortableIniLock lock(filepath);
+  PortableConfig config;
+
+  if (historyIn != nullptr)
+    config.history = *historyIn;
+  else
+    parsePortableIni(&config, ApplyPortableParameters::No);
+
+  writePortableIni(servername ? servername : "", config.history);
+}
+
+static void savePortableHistory(const std::list<std::string>& history)
+{
+  std::string filepath = getPortableIniPath();
+  PortableIniLock lock(filepath);
+  PortableConfig config;
+
+  parsePortableIni(&config, ApplyPortableParameters::No);
+  writePortableIni(config.serverName.c_str(), history);
+}
+
+void savePortableViewerState(const char* servername,
+                             const std::list<std::string>& serverHistory)
+{
+  std::string filepath = getPortableIniPath();
+  PortableIniLock lock(filepath);
+  writePortableIni(servername ? servername : "", serverHistory);
+}
+#endif // BUILD_PORTABLE_VIEWER
+
+std::list<std::string> loadServerHistory()
+{
+#ifdef BUILD_PORTABLE_VIEWER
+  PortableConfig config;
+  parsePortableIni(&config, ApplyPortableParameters::No);
+  return config.history;
+#elif defined(_WIN32)
+  return loadHistoryFromRegKey();
+#else
+  std::list<std::string> serverHistory;
+  const char* stateDir = core::getvncstatedir();
+  char filepath[PATH_MAX];
+  FILE* f;
+  int lineNr = 0;
+
+  if (stateDir == nullptr)
+    throw std::runtime_error(_("Could not determine VNC state directory path"));
+
+  snprintf(filepath, sizeof(filepath), "%s/%s", stateDir, "tigervnc.history");
+  f = fopen(filepath, "r");
+  if (!f) {
+    if (errno == ENOENT)
+      return serverHistory;
+    throw core::posix_error(
+      core::format(_("Failed to open \"%s\""), filepath), errno);
+  }
+
+  while (!feof(f)) {
+    char line[256];
+    int len;
+
+    lineNr++;
+    if (!fgets(line, sizeof(line), f)) {
+      if (feof(f))
+        break;
+      fclose(f);
+      throw core::posix_error(
+        core::format(_("Failed to read line %d in file \"%s\""),
+                     lineNr, filepath),
+        errno);
+    }
+
+    len = strlen(line);
+    if (len == (sizeof(line) - 1)) {
+      fclose(f);
+      std::string msg = core::format(_("Failed to read line %d in "
+                                       "file \"%s\""),
+                                     lineNr, filepath);
+      throw std::runtime_error(
+        core::format("%s: %s", msg.c_str(), _("Line too long")));
+    }
+    if ((len > 0) && (line[len-1] == '\n')) {
+      line[len-1] = '\0';
+      len--;
+    }
+    if ((len > 0) && (line[len-1] == '\r')) {
+      line[len-1] = '\0';
+      len--;
+    }
+    if (len == 0)
+      continue;
+    serverHistory.push_back(line);
+  }
+
+  fclose(f);
+  return serverHistory;
+#endif
+}
+
+void saveServerHistory(const std::list<std::string>& serverHistory)
+{
+#ifdef BUILD_PORTABLE_VIEWER
+  savePortableHistory(serverHistory);
+#elif defined(_WIN32)
+  saveHistoryToRegKey(serverHistory);
+#else
+  const char* stateDir = core::getvncstatedir();
+  char filepath[PATH_MAX];
+  FILE* f;
+  size_t count = 0;
+
+  if (stateDir == nullptr)
+    throw std::runtime_error(_("Could not determine VNC state directory path"));
+
+  snprintf(filepath, sizeof(filepath), "%s/%s", stateDir, "tigervnc.history");
+  f = fopen(filepath, "w+");
+  if (!f) {
+    std::string msg = core::format(_("Failed to open \"%s\""), filepath);
+    throw core::posix_error(msg.c_str(), errno);
+  }
+
+  for (const std::string& entry : serverHistory) {
+    if (++count > SERVER_HISTORY_SIZE)
+      break;
+    fprintf(f, "%s\n", entry.c_str());
+  }
+
+  fclose(f);
+#endif
 }

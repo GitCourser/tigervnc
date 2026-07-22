@@ -36,6 +36,7 @@
 #ifdef WIN32
 #include <core/winerrno.h>
 #include <direct.h>
+#include <windows.h>
 #endif
 
 #include <core/Exception.h>
@@ -455,6 +456,11 @@ potentiallyLoadConfigurationFile(const char *filename)
 static void
 create_base_dirs()
 {
+#ifdef BUILD_PORTABLE_VIEWER
+  /* Portable builds keep all data next to the executable. Do not create
+     AppData/TigerVNC or any other external profile directories. */
+  return;
+#else
   const char *dir;
 
   dir = core::getvncconfigdir();
@@ -502,6 +508,7 @@ create_base_dirs()
       vlog.error(_("Could not create VNC state directory \"%s\": %s"),
                  dir, strerror(errno));
   }
+#endif
 }
 
 #ifndef WIN32
@@ -550,12 +557,26 @@ int main(int argc, char** argv)
 {
   argv0 = argv[0];
 
+#ifdef BUILD_PORTABLE_VIEWER
+  setlocale(LC_ALL, "zh_CN.UTF-8");
+  if (setlocale(LC_ALL, nullptr) == nullptr ||
+      strcmp(setlocale(LC_ALL, nullptr), "C") == 0)
+    setlocale(LC_ALL, "zh_CN");
+#ifdef WIN32
+  SetEnvironmentVariableA("LANGUAGE", "zh_CN");
+  SetEnvironmentVariableA("LC_ALL", "zh_CN.UTF-8");
+  SetEnvironmentVariableA("LANG", "zh_CN.UTF-8");
+#endif
+#else
   setlocale(LC_ALL, "");
+#endif
 
   fprintf(stderr,"\n%s\n", about_text());
 
   core::initStdIOLoggers();
-#ifdef WIN32
+#ifdef BUILD_PORTABLE_VIEWER
+  /* Portable release builds should not leave logs in %TEMP%. Keep stderr only. */
+#elif defined(WIN32)
   const char* tmp;
   struct stat st;
   std::string logfn;

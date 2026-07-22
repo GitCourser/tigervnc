@@ -37,11 +37,54 @@
 #include <windows.h>
 #include <wininet.h> /* MinGW needs it */
 #include <shlobj.h>
+#include <string.h>
+#ifndef PATH_MAX
+#define PATH_MAX MAX_PATH
+#endif
 #define stat _stat
 #define mkdir(path, mode) mkdir(path)
 #endif
 
 #include <core/xdgdirs.h>
+
+const char* core::getexedir()
+{
+  static char dir[PATH_MAX];
+
+#ifdef WIN32
+  wchar_t wpath[MAX_PATH];
+  DWORD len;
+  wchar_t *slash;
+
+  len = GetModuleFileNameW(nullptr, wpath, MAX_PATH);
+  if (len == 0 || len >= MAX_PATH)
+    return nullptr;
+
+  slash = wcsrchr(wpath, L'\\');
+  if (slash == nullptr)
+    return nullptr;
+  *slash = L'\0';
+
+  if (WideCharToMultiByte(CP_UTF8, 0, wpath, -1, dir, sizeof(dir),
+                          nullptr, nullptr) == 0)
+    return nullptr;
+
+  return dir;
+#else
+  /* Best-effort fallback for non-Windows builds */
+  char *slash;
+
+  if (readlink("/proc/self/exe", dir, sizeof(dir) - 1) < 0)
+    return nullptr;
+  dir[sizeof(dir) - 1] = '\0';
+
+  slash = strrchr(dir, '/');
+  if (slash == nullptr)
+    return nullptr;
+  *slash = '\0';
+  return dir;
+#endif
+}
 
 static const char* getvncdir(bool userDir, const char *xdg_env, const char *xdg_def)
 {
@@ -116,17 +159,29 @@ const char* core::getuserhomedir()
 
 const char* core::getvncconfigdir()
 {
+#ifdef BUILD_PORTABLE_VIEWER
+  return getexedir();
+#else
   return getvncdir(false, "XDG_CONFIG_HOME", ".config");
+#endif
 }
 
 const char* core::getvncdatadir()
 {
+#ifdef BUILD_PORTABLE_VIEWER
+  return getexedir();
+#else
   return getvncdir(false, "XDG_DATA_HOME", ".local/share");
+#endif
 }
 
 const char* core::getvncstatedir()
 {
+#ifdef BUILD_PORTABLE_VIEWER
+  return getexedir();
+#else
   return getvncdir(false, "XDG_STATE_HOME", ".local/state");
+#endif
 }
 
 int core::mkdir_p(const char *path_, mode_t mode)

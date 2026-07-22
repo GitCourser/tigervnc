@@ -77,6 +77,12 @@ if(BUILD_STATIC)
       HINTS ${PC_GNUTLS_LIBDIR} ${PC_GNUTLS_LIBRARY_DIRS})
     FIND_LIBRARY(ZSTD_LIBRARY NAMES zstd libzstd
       HINTS ${PC_GNUTLS_LIBDIR} ${PC_GNUTLS_LIBRARY_DIRS})
+    FIND_LIBRARY(BROTLIENC_LIBRARY NAMES brotlienc libbrotlienc
+      HINTS ${PC_GNUTLS_LIBDIR} ${PC_GNUTLS_LIBRARY_DIRS})
+    FIND_LIBRARY(BROTLIDEC_LIBRARY NAMES brotlidec libbrotlidec
+      HINTS ${PC_GNUTLS_LIBDIR} ${PC_GNUTLS_LIBRARY_DIRS})
+    FIND_LIBRARY(BROTLICOMMON_LIBRARY NAMES brotlicommon libbrotlicommon
+      HINTS ${PC_GNUTLS_LIBDIR} ${PC_GNUTLS_LIBRARY_DIRS})
 
     set(GNUTLS_LIBRARIES "-Wl,-Bstatic -lgnutls")
 
@@ -92,26 +98,49 @@ if(BUILD_STATIC)
     if(ZSTD_LIBRARY)
       set(GNUTLS_LIBRARIES "${GNUTLS_LIBRARIES} -lzstd")
     endif()
+    # Modern GnuTLS can be built with Brotli certificate compression.
+    if(BROTLIENC_LIBRARY)
+      set(GNUTLS_LIBRARIES "${GNUTLS_LIBRARIES} -lbrotlienc")
+    endif()
+    if(BROTLIDEC_LIBRARY)
+      set(GNUTLS_LIBRARIES "${GNUTLS_LIBRARIES} -lbrotlidec")
+    endif()
+    if(BROTLICOMMON_LIBRARY)
+      set(GNUTLS_LIBRARIES "${GNUTLS_LIBRARIES} -lbrotlicommon")
+    endif()
 
-    set(GNUTLS_LIBRARIES "${GNUTLS_LIBRARIES} -Wl,-Bdynamic")
-
-    if (WIN32)
+    if (WIN32 AND BUILD_PORTABLE_VIEWER)
       FIND_LIBRARY(P11KIT_LIBRARY NAMES p11-kit libp11-kit
         HINTS ${PC_GNUTLS_LIBDIR} ${PC_GNUTLS_LIBRARY_DIRS})
       FIND_LIBRARY(UNISTRING_LIBRARY NAMES unistring libunistring
         HINTS ${PC_GNUTLS_LIBDIR} ${PC_GNUTLS_LIBRARY_DIRS})
 
-      # GnuTLS uses various crypto-api stuff
-      set(GNUTLS_LIBRARIES "${GNUTLS_LIBRARIES} -lcrypt32 -lncrypt -lbcrypt")
-      # And sockets
-      set(GNUTLS_LIBRARIES "${GNUTLS_LIBRARIES} -lws2_32")
-
-      # p11-kit only available as dynamic library for MSYS2 on Windows and dynamic linking of unistring is required
+      # Portable builds must keep all non-system GnuTLS dependencies static.
       if(P11KIT_LIBRARY)
         set(GNUTLS_LIBRARIES "${GNUTLS_LIBRARIES} -lp11-kit")
       endif()
       if(UNISTRING_LIBRARY)
         set(GNUTLS_LIBRARIES "${GNUTLS_LIBRARIES} -lunistring")
+      endif()
+      set(GNUTLS_LIBRARIES "${GNUTLS_LIBRARIES} -Wl,-Bdynamic")
+      set(GNUTLS_LIBRARIES "${GNUTLS_LIBRARIES} -lcrypt32 -lncrypt -lbcrypt -lws2_32")
+    else()
+      set(GNUTLS_LIBRARIES "${GNUTLS_LIBRARIES} -Wl,-Bdynamic")
+
+      if (WIN32)
+        FIND_LIBRARY(P11KIT_LIBRARY NAMES p11-kit libp11-kit
+          HINTS ${PC_GNUTLS_LIBDIR} ${PC_GNUTLS_LIBRARY_DIRS})
+        FIND_LIBRARY(UNISTRING_LIBRARY NAMES unistring libunistring
+          HINTS ${PC_GNUTLS_LIBDIR} ${PC_GNUTLS_LIBRARY_DIRS})
+
+        # p11-kit only available as dynamic library for MSYS2 on Windows and dynamic linking of unistring is required
+        if(P11KIT_LIBRARY)
+          set(GNUTLS_LIBRARIES "${GNUTLS_LIBRARIES} -lp11-kit")
+        endif()
+        if(UNISTRING_LIBRARY)
+          set(GNUTLS_LIBRARIES "${GNUTLS_LIBRARIES} -lunistring")
+        endif()
+        set(GNUTLS_LIBRARIES "${GNUTLS_LIBRARIES} -lcrypt32 -lncrypt -lbcrypt -lws2_32")
       endif()
     endif()
 

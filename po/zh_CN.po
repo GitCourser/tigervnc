@@ -10,7 +10,7 @@ msgstr ""
 "Project-Id-Version: tigervnc 1.13.90\n"
 "Report-Msgid-Bugs-To: tigervnc-devel@googlegroups.com\n"
 "POT-Creation-Date: 2024-06-20 15:01+0200\n"
-"PO-Revision-Date: 2024-09-02 12:19+0800\n"
+"PO-Revision-Date: 2026-07-22 17:50+0800\n"
 "Last-Translator: Mingye Wang (Artoria2e5) <arthur200126@gmail.com>\n"
 "Language-Team: Chinese (simplified) <i18n-zh@googlegroups.com>\n"
 "Language: zh_CN\n"
@@ -182,7 +182,7 @@ msgid "Unexpected character '%c'"
 msgstr "意料之外的字符 '%c'"
 
 #: vncviewer/OptionsDialog.cxx:64
-msgid "TigerVNC Options"
+msgid "TigerVNC options"
 msgstr "TigerVNC 选项"
 
 #: vncviewer/OptionsDialog.cxx:97 vncviewer/ServerDialog.cxx:102
@@ -227,16 +227,16 @@ msgid "Very low"
 msgstr "非常低"
 
 #: vncviewer/OptionsDialog.cxx:645
-msgid "Custom compression level:"
-msgstr "自定义压缩级别："
+msgid "Custom compression level"
+msgstr "自定义压缩级别"
 
 #: vncviewer/OptionsDialog.cxx:652
 msgid "level (0=fast, 9=best)"
 msgstr "级别（0=最快，9=最好）"
 
 #: vncviewer/OptionsDialog.cxx:659
-msgid "Allow JPEG compression:"
-msgstr "允许 JPEG 压缩："
+msgid "Allow JPEG compression"
+msgstr "允许 JPEG 压缩"
 
 #: vncviewer/OptionsDialog.cxx:666
 msgid "quality (0=poor, 9=best)"
@@ -300,16 +300,16 @@ msgid "Emulate middle mouse button"
 msgstr "模拟鼠标中键"
 
 #: vncviewer/OptionsDialog.cxx:843
-msgid "Show dot when no cursor"
-msgstr "无光标时显示一个点"
+msgid "Show local cursor when not provided by server"
+msgstr "服务器未提供光标时显示本地光标"
 
 #: vncviewer/OptionsDialog.cxx:859
 msgid "Keyboard"
 msgstr "键盘"
 
 #: vncviewer/OptionsDialog.cxx:871
-msgid "Pass system keys directly to server (full screen)"
-msgstr "将系统键位直接传递到服务器（全屏）"
+msgid "Always send all keyboard input in full screen"
+msgstr "全屏时始终将全部键盘输入发送到服务器"
 
 #: vncviewer/OptionsDialog.cxx:874
 msgid "Menu key"
@@ -321,7 +321,7 @@ msgstr "剪贴板"
 
 #: vncviewer/OptionsDialog.cxx:907
 msgid "Accept clipboard from server"
-msgstr "接受来自服务器的剪切板内容"
+msgstr "接受来自服务器的剪贴板内容"
 
 #: vncviewer/OptionsDialog.cxx:915
 msgid "Also set primary selection"
@@ -329,11 +329,11 @@ msgstr "同样设定鼠标选择内容"
 
 #: vncviewer/OptionsDialog.cxx:922
 msgid "Send clipboard to server"
-msgstr "发送剪切板内容到服务器"
+msgstr "发送剪贴板内容到服务器"
 
 #: vncviewer/OptionsDialog.cxx:930
 msgid "Send primary selection as clipboard"
-msgstr "将鼠标选择内容作为剪切板内容发送"
+msgstr "将主选区内容作为剪贴板内容发送"
 
 #: vncviewer/OptionsDialog.cxx:951
 msgid "Display"
@@ -388,7 +388,7 @@ msgid "Load..."
 msgstr "载入..."
 
 #: vncviewer/ServerDialog.cxx:83
-msgid "Save As..."
+msgid "Save as..."
 msgstr "保存为..."
 
 #: vncviewer/ServerDialog.cxx:97
@@ -646,8 +646,8 @@ msgstr "连接信息...(&I)"
 
 #: vncviewer/Viewport.cxx:1267
 msgctxt "ContextMenu|"
-msgid "About &TigerVNC viewer..."
-msgstr "关于 &TigerVNC 查看器..."
+msgid "About &TigerVNC..."
+msgstr "关于 &TigerVNC..."
 
 #: vncviewer/Viewport.cxx:1356
 msgid "VNC connection info"
@@ -1118,3 +1118,66 @@ msgstr "远程桌面查看器"
 
 #~ msgid "Using default colormap and visual, TrueColor, depth %d."
 #~ msgstr "正在使用默认的颜色映射及视觉效果，真彩色，色深 %d。"
+
+msgid "Cursor type"
+msgstr "光标类型"
+
+msgid "Dot"
+msgstr "点"
+
+msgid "System"
+msgstr "系统"
+
+msgid "Keyboard shortcuts"
+msgstr "键盘快捷键"
+
+msgid "Modifier keys for keyboard shortcuts:"
+msgstr "键盘快捷键的修饰键："
+
+msgid "Quality level"
+msgstr "质量级别"
+
+msgid "Keep password for reconnect"
+msgstr "为重新连接保留密码"
+
+msgid "All keyboard shortcuts are disabled."
+msgstr "所有键盘快捷键均已禁用。"
+
+msgid "To release keyboard control from the session, press %s."
+msgstr "要释放会话的键盘控制，请按 %s。"
+
+msgid "To pass all keyboard input to the session, press %sG."
+msgstr "要将所有键盘输入发送到会话，请按 %sG。"
+
+msgid "To toggle full-screen mode, press %sEnter."
+msgstr "要切换全屏模式，请按 %sEnter。"
+
+msgid "To open the session context menu, press %sM."
+msgstr "要打开会话上下文菜单，请按 %sM。"
+
+msgid "Press %sM to open the context menu"
+msgstr "按 %sM 打开上下文菜单"
+
+msgid "Press %sEnter to leave full-screen mode"
+msgstr "按 %sEnter 退出全屏模式"
+
+msgid "Press %s to release keyboard control from the session"
+msgstr "按 %s 释放会话的键盘控制"
+
+msgid "%s - TigerVNC"
+msgstr "%s - TigerVNC"
+
+msgid "%s - TigerVNC (keyboard grabbed)"
+msgstr "%s - TigerVNC（已捕获键盘）"
+
+msgid "Failure grabbing control of the keyboard"
+msgstr "捕获键盘控制失败"
+
+msgid "Invalid UTF-8 sequence in clipboard"
+msgstr "剪贴板中包含无效的 UTF-8 序列"
+
+msgid "Continue"
+msgstr "继续"
+
+msgid "Add exception"
+msgstr "添加例外"
